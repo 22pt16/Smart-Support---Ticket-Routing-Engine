@@ -118,7 +118,7 @@ When a ticket’s urgency score **S > 0.8**, the worker can send a message to a 
 1. Open [api.slack.com/apps](https://api.slack.com/apps) and sign in.
 2. **Create New App** → **From scratch** → name (e.g. “Ticket Alerts”) and select your workspace → **Create App**.
 3. In the app, open **Incoming Webhooks** and turn **Activate Incoming Webhooks** **On**.
-4. Click **Add New Webhook to Workspace**, choose the channel (e.g. `#support`), then **Allow**.
+4. Click **Add New Webhook to Workspace**, choose the channel (e.g. `#all-hack`), then **Allow**.
 5. Copy the **Webhook URL** (e.g. `https://hooks.slack.com/services/T.../B.../xxx`).
 
 ### 2. Configure the project
@@ -131,11 +131,6 @@ Create a `.env` file in the project root (same folder as `app.py` and `worker.py
 cp .env.example .env
 ```
 
-Then edit `.env` and add or uncomment:
-
-```
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx
-```
 
 **Windows (in project folder):**
 
@@ -143,9 +138,6 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx
 copy .env.example .env
 ```
 
-Then edit `.env` in a text editor and add the line above (no quotes, no spaces around `=`).
-
-The worker loads `.env` automatically when it starts (via `python-dotenv`), so no need to export the variable manually if you use `.env`.
 
 ### 3. Verify Slack (optional)
 
@@ -331,3 +323,4 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/next" -Method Get
 | GET | /health | Health check; returns `{"status":"ok"}`. |
 
 API docs (Swagger): **http://127.0.0.1:8000/docs**
+
