@@ -328,28 +328,29 @@ API docs (Swagger): **http://127.0.0.1:8000/docs**
 
 After deduplication : (modify the previous later)
 # ----------------------------
-# Submit Ticket
+### Submit Ticket
 # ----------------------------
+```powershell
 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body '{"description":"Server down urgent"}'
+>>   -Method Post `
+>>   -ContentType "application/json" `
+>>   -Body '{"description":"Login broken ASAP - cannot log in"}'
 
 $ticketId = $response.ticket_id
 Write-Host "Created Ticket: $ticketId"
+```
 
 # ----------------------------
-# Check Ticket Status
+### View Queue
 # ----------------------------
+```powershell
 Start-Sleep -Seconds 1
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/$ticketId/status" -Method Get
 
-# ----------------------------
-# View Queue
-# ----------------------------
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/queue" -Method Get
-
+```
 # ----------------------------
-# Get Next Highest Urgency Ticket
+### Get Next Highest Urgency Ticket
 # ----------------------------
+```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/next" -Method Get
+```
