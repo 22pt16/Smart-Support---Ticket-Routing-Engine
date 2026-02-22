@@ -104,7 +104,7 @@ async def get_ticket_status(ticket_id: str):
 # View Queue
 # -------------------------
 
-@app.get("/queue", response_model=list[TicketItem])
+@app.get("/queue")
 async def view_queue():
     return await list_queue_from_redis_async()
 
@@ -113,7 +113,7 @@ async def view_queue():
 # Get Next Highest Urgency Ticket
 # -------------------------
 
-@app.get("/tickets/next", response_model=TicketItem)
+@app.get("/tickets/next")
 async def get_next_ticket():
     ticket = get_next_ready_ticket_sync()
     if not ticket:

@@ -89,7 +89,15 @@ def process_ticket(ticket: dict) -> None:
             agents[agent]["load"] += 1
             assigned_agent = agent
         else:
-            assigned_agent = "unassigned"
+            # Reset loads if all full (avoid deadlock)
+            for a in agents:
+                agents[a]["load"] = 0
+            agent = select_agent(category)
+            if agent:
+                agents[agent]["load"] += 1
+                assigned_agent = agent
+            else:
+                assigned_agent = "unassigned"
 
         # -------------------------
         # Completed Status
