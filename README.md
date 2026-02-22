@@ -4,6 +4,7 @@ A ticket routing API that classifies support tickets (Billing, Technical, Legal)
 
 ---
 
+
 ## Table of contents
 
 1. [Architecture](#architecture)
