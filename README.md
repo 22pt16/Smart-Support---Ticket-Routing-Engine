@@ -1,6 +1,15 @@
+# Smart-Support — Intelligent Ticket Routing Engine
 # MVR — Minimum Viable Router
 
-A ticket routing API that classifies support tickets (Billing, Technical, Legal), scores urgency with ML, queues them in **Redis**, and sends high-urgency alerts (S > 0.8) to **Slack**.
+A ML-powered ticket routing system designed to handle:
+
+- High throughput
+- Ticket storms
+- ML latency failures
+- Agent load balancing
+- Concurrency bursts (10+ simultaneous requests) 
+
+that classifies support tickets (Billing, Technical, Legal), scores urgency with ML, queues them in **Redis**, and sends high-urgency alerts to **Slack**.
 
 ---
 
@@ -18,7 +27,10 @@ A ticket routing API that classifies support tickets (Billing, Technical, Legal)
 
 ## Architecture
 
-The system has three main parts: the **API** (FastAPI), **Redis** (queue and state), and a **worker** process that runs ML and posts to Slack.
+The system has three main parts: 
+1. **FastAPI** (Accepts and validates tickets)
+2. **Redis Broker Layer** (Queue, locks, and state management), and
+3. **worker** Layer (ML processing, routing, deduplication, circuit breaker).
 
 ### High-level flow
 
@@ -252,64 +264,407 @@ Leave this running. You should see "Worker started, listening on queue mvr:ticke
 
 ---
 
-## How to test
+Perfect — I’ll give you a **clean, GitHub-ready “How to Test” section** that:
 
-### Quick check (browser)
+* Works for **Mac/Linux (curl)**
+* Works for **Windows (PowerShell)**
+* Shows **expected output**
+* Verifies **all major system features**
+* Looks professional in README
 
-1. Open **http://127.0.0.1:8000/docs**.
-2. Try **GET /health** → should return `{"status":"ok"}`.
-3. Try **POST /tickets** with body: `{"subject":"Login broken ASAP","body":"Cannot log in."}` → should return **202** with `ticket_id` and `status_url`.
-4. Copy `ticket_id` and call **GET /tickets/{ticket_id}/status** until `"status":"completed"` and you see `category` and `urgency_score`.
-5. Try **GET /queue** and **GET /tickets/next**.
+You can paste this directly.
 
-### Using curl (Mac / Linux)
+---
+
+# How to Test
+
+Make sure:
+
+* API is running on `http://127.0.0.1:8000`
+* Worker is running
+* Redis is running
+
+---
+
+# 1️. Quick Browser Check
+
+Open:
+
+```
+http://127.0.0.1:8000/docs
+```
+
+Try:
+
+* `GET /health`
+
+Expected:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+# Mac / Linux (curl)
+
+---
+
+## 1. Health Check
 
 ```bash
-# Health
 curl -s http://127.0.0.1:8000/health
+```
 
-# Submit ticket
-curl -s -X POST http://127.0.0.1:8000/tickets \
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+---
+
+## 2. Submit Ticket (Async 202)
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/tickets \
   -H "Content-Type: application/json" \
   -d '{"subject":"Login broken ASAP","body":"Cannot log in."}'
-
-# Status (replace TICKET_ID with the id from the previous response)
-curl -s http://127.0.0.1:8000/tickets/TICKET_ID/status
-
-# Queue
-curl -s http://127.0.0.1:8000/queue
-
-# Next ticket
-curl -s http://127.0.0.1:8000/tickets/next
 ```
 
-### Using PowerShell (Windows)
+Expected:
+
+```
+HTTP/1.1 202 Accepted
+```
+
+Response body:
+
+```json
+{
+  "ticket_id": "ticket-xxxx",
+  "status": "accepted",
+  "status_url": "/tickets/ticket-xxxx/status"
+}
+```
+
+ Confirms async architecture (ML not blocking API).
+
+---
+
+## 3. Check Status Lifecycle
+
+```bash
+curl -s http://127.0.0.1:8000/tickets/TICKET_ID/status
+```
+
+Initial:
+
+```json
+{"status":"pending"}
+```
+
+Later:
+
+```json
+{
+  "status": "completed",
+  "category": "Technical",
+  "urgency_score": 0.99,
+  "urgency_label": "high",
+  "assigned_agent": "Agent1"
+}
+```
+
+ Confirms ML + routing + Redis status.
+
+---
+
+## 4. Queue Priority
+
+Submit low + high urgency tickets:
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Minor UI issue"}'
+
+curl -X POST http://127.0.0.1:8000/tickets \
+  -H "Content-Type: application/json" \
+  -d '{"description":"CRITICAL server outage immediately"}'
+```
+
+Check queue:
+
+```bash
+curl http://127.0.0.1:8000/queue
+```
+
+Expected:
+
+* Completed tickets
+* Higher `urgency_score` appears first
+
+Pop highest:
+
+```bash
+curl http://127.0.0.1:8000/tickets/next
+```
+
+ Confirms Redis sorted set priority.
+
+---
+
+## 5. Flash Flood Test
+
+```bash
+for i in {1..11}
+do
+curl -X POST http://127.0.0.1:8000/tickets \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Server outage broken login"}'
+done
+```
+
+Check status of last ticket:
+
+```bash
+curl http://127.0.0.1:8000/tickets/LAST_TICKET_ID/status
+```
+
+Expected:
+
+```json
+{"status":"master_incident"}
+```
+
+ Confirms semantic deduplication.
+
+---
+
+#  Windows (PowerShell)
+
+---
+
+## Setup Variable
 
 ```powershell
-# Health
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method Get
-
-# Submit ticket
-$body = '{"subject":"Login broken ASAP","body":"Cannot log in."}'
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets" -Method Post -Body $body -ContentType "application/json"
-
-# Status (replace TICKET_ID with the id returned above)
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/TICKET_ID/status" -Method Get
-
-# Queue
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/queue" -Method Get
-
-# Next ticket
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/next" -Method Get
+$BASE = "http://127.0.0.1:8000"
 ```
 
-### What to expect
+---
 
-- **POST /tickets** → **202** with `ticket_id`, `status: "accepted"`, `status_url`.
-- **GET /tickets/{id}/status** → `pending` → `processing` → `completed`; when completed, `category`, `urgency_score` (S in [0, 1]), `urgency_label`.
-- **GET /queue** → list of tickets (from Redis), ordered by urgency.
-- **GET /tickets/next** → one completed ticket (highest S), or 404 if none.
-- If S > 0.8 and Slack is configured, the worker posts to your Slack channel.
+## 1️. Health Check
+
+```powershell
+Invoke-RestMethod -Uri "$BASE/health"
+```
+
+Expected:
+
+```
+status
+------
+ok
+```
+
+---
+
+## 2️. Verify Async 202
+
+```powershell
+$response = Invoke-WebRequest `
+  -Uri "$BASE/tickets" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"subject":"Login broken ASAP","body":"Cannot log in."}'
+
+$response.StatusCode
+$response.Content | ConvertFrom-Json
+```
+
+Expected:
+
+```
+202
+```
+
+JSON:
+
+```
+ticket_id
+status = accepted
+```
+
+ Confirms async broker behavior.
+
+---
+
+## 3️. Status Lifecycle
+
+```powershell
+$ticket = $response.Content | ConvertFrom-Json
+$ticketId = $ticket.ticket_id
+
+Start-Sleep -Seconds 2
+Invoke-RestMethod -Uri "$BASE/tickets/$ticketId/status"
+```
+
+Expected final output:
+
+```
+status        : completed
+category      : Technical
+urgency_score : 0.xxxx
+urgency_label : high
+assigned_agent: Agent1
+```
+
+ Confirms ML + routing + persistence.
+
+---
+
+## 4️. Skill-Based Routing
+
+### Technical
+
+```powershell
+$t1 = Invoke-RestMethod `
+  -Uri "$BASE/tickets" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"description":"API server crash and error"}'
+
+Start-Sleep -Seconds 2
+Invoke-RestMethod -Uri "$BASE/tickets/$($t1.ticket_id)/status"
+```
+
+Expected:
+
+```
+category       : Technical
+assigned_agent : Agent1
+```
+
+---
+
+### Billing
+
+```powershell
+$t2 = Invoke-RestMethod `
+  -Uri "$BASE/tickets" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"description":"Refund and billing charge issue"}'
+
+Start-Sleep -Seconds 2
+Invoke-RestMethod -Uri "$BASE/tickets/$($t2.ticket_id)/status"
+```
+
+Expected:
+
+```
+category       : Billing
+assigned_agent : Agent2
+```
+
+ Confirms skill optimization.
+
+---
+
+## 5️. Circuit Breaker
+
+Trigger heavy ML calls:
+
+```powershell
+1..4 | ForEach-Object {
+    Invoke-RestMethod `
+      -Uri "$BASE/tickets" `
+      -Method Post `
+      -ContentType "application/json" `
+      -Body '{"description":"Complex legal compliance GDPR violation urgent review"}'
+}
+```
+
+If breaker opens:
+
+* urgency_score becomes 0 or 1 (baseline)
+* system continues responding
+
+ Confirms failover works.
+
+---
+
+## 6️. Flash Flood Protection
+
+```powershell
+1..11 | ForEach-Object {
+    Invoke-RestMethod `
+      -Uri "$BASE/tickets" `
+      -Method Post `
+      -ContentType "application/json" `
+      -Body '{"description":"Server outage broken login"}'
+}
+```
+
+Check last ticket:
+
+```powershell
+Start-Sleep -Seconds 3
+Invoke-RestMethod -Uri "$BASE/tickets/<LAST_ID>/status"
+```
+
+Expected:
+
+```
+status : master_incident
+```
+
+ Confirms deduplication.
+
+---
+
+## 7️. Concurrency Test (10+ Requests)
+
+```powershell
+1..15 | ForEach-Object {
+    Start-Job {
+        Invoke-RestMethod `
+          -Uri "http://127.0.0.1:8000/tickets" `
+          -Method Post `
+          -ContentType "application/json" `
+          -Body '{"description":"Simultaneous request test"}'
+    }
+}
+
+Get-Job | Wait-Job
+Invoke-RestMethod -Uri "$BASE/queue"
+```
+
+Expected:
+
+* All tickets accepted
+* No duplicate IDs
+* No errors
+* Queue populated correctly
+
+ Confirms atomic locking & concurrency safety.
+
+---
+
+### Overall What to expect
+
+* `POST /tickets` → **202 Accepted**
+* Status lifecycle: `pending → processing → completed`
+* Urgency score between 0 and 1
+* Skill-based agent assignment
+* Sorted queue by urgency
+* Flash flood detection creates `master_incident`
+* Circuit breaker prevents ML latency failure
+* Slack alerts for S > 0.8 (if configured)
+* Handles 10+ simultaneous submissions safely
 
 ---
 
@@ -326,31 +681,3 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/next" -Method Get
 API docs (Swagger): **http://127.0.0.1:8000/docs**
 
 
-After deduplication : (modify the previous later)
-# ----------------------------
-### Submit Ticket
-# ----------------------------
-```powershell
-$response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets" `
->>   -Method Post `
->>   -ContentType "application/json" `
->>   -Body '{"description":"Login broken ASAP - cannot log in"}'
-
-$ticketId = $response.ticket_id
-Write-Host "Created Ticket: $ticketId"
-```
-
-# ----------------------------
-### View Queue
-# ----------------------------
-```powershell
-Start-Sleep -Seconds 1
-
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/queue" -Method Get
-```
-# ----------------------------
-### Get Next Highest Urgency Ticket
-# ----------------------------
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/tickets/next" -Method Get
-```
