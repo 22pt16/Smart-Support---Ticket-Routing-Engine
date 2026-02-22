@@ -29,7 +29,7 @@ class TicketCreate(BaseModel):
 
 
 class TicketQueuedResponse(BaseModel):
-    """Response after submitting a ticket."""
+    """Response after submitting a ticket (M1 sync flow)."""
 
     ticket_id: str
     category: Category
@@ -37,12 +37,35 @@ class TicketQueuedResponse(BaseModel):
     message: str = "queued"
 
 
+class TicketAcceptedResponse(BaseModel):
+    """202 Accepted response (M2 async flow)."""
+
+    ticket_id: str
+    status: str = "accepted"
+    status_url: str
+
+
+class TicketStatusResponse(BaseModel):
+    """Ticket status (pending | processing | completed)."""
+
+    ticket_id: str
+    status: str  # pending | processing | completed
+    category: Optional[Category] = None
+    urgency_score: Optional[float] = None  # S in [0, 1]
+    urgency_label: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    description: Optional[str] = None
+    created_at: Optional[float] = None
+
+
 class TicketItem(BaseModel):
     """A ticket as returned from the queue (e.g. GET /queue or GET /tickets/next)."""
 
     ticket_id: str
     category: Category
-    urgency: UrgencyLabel
+    urgency: str  # "low" | "high" or derived from urgency_score
+    urgency_score: Optional[float] = None  # S in [0, 1]
     subject: Optional[str] = None
     body: Optional[str] = None
     description: Optional[str] = None

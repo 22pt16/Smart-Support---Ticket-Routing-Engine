@@ -1,58 +1,128 @@
-"""MVR REST API: ticket submission and queue access."""
+"""MVR REST API: ticket submission (202 Accepted) and queue access."""
 
+import asyncio
+import time
 from typing import List
 
 from fastapi import FastAPI, HTTPException
 
-from classifier import classify_category, get_urgency, get_urgency_label
-from models import TicketCreate, TicketItem, TicketQueuedResponse
-from queue_store import add_ticket, get_next, peek_queue
+from broker import (
+    acquire_submit_lock_async,
+    add_to_all_ids_async,
+    enqueue_async,
+    generate_ticket_id,
+    get_next_ready_ticket_sync,
+    get_status_async,
+    list_queue_from_redis_async,
+    release_submit_lock_async,
+    set_status_async,
+)
+from models import (
+    TicketAcceptedResponse,
+    TicketCreate,
+    TicketItem,
+    TicketStatusResponse,
+)
 
-app = FastAPI(title="MVR Ticket Router", version="1.0.0")
+app = FastAPI(title="MVR Ticket Router", version="2.0.0")
 
 
-@app.post("/tickets", response_model=TicketQueuedResponse, status_code=201)
-def create_ticket(payload: TicketCreate) -> TicketQueuedResponse:
-    """Accept a ticket JSON, classify it, set urgency, and enqueue."""
-    text = payload.combined_text()
-    category = classify_category(text)
-    urgency_score = get_urgency(text)
-    urgency_label = get_urgency_label(text)
+@app.post("/tickets", response_model=TicketAcceptedResponse, status_code=202)
+async def create_ticket(payload: TicketCreate) -> TicketAcceptedResponse:
+    """Accept a ticket, enqueue to broker, return 202 Accepted immediately."""
+    max_retries = 10
+    for attempt in range(max_retries):
+        acquired = await acquire_submit_lock_async()
+        if not acquired:
+            await asyncio.sleep(0.05 * (attempt + 1))
+            continue
+        try:
+            ticket_id = payload.ticket_id or generate_ticket_id()
+            text = payload.combined_text()
+            created_at = time.time()
+            message = {
+                "ticket_id": ticket_id,
+                "subject": payload.subject,
+                "body": payload.body,
+                "description": payload.description,
+                "combined_text": text,
+                "created_at": created_at,
+            }
+            await set_status_async(
+                ticket_id,
+                {
+                    "ticket_id": ticket_id,
+                    "status": "pending",
+                    "subject": payload.subject,
+                    "body": payload.body,
+                    "description": payload.description,
+                    "created_at": created_at,
+                },
+            )
+            await add_to_all_ids_async(ticket_id)
+            await enqueue_async(message)
+            status_url = f"/tickets/{ticket_id}/status"
+            return TicketAcceptedResponse(
+                ticket_id=ticket_id,
+                status="accepted",
+                status_url=status_url,
+            )
+        finally:
+            await release_submit_lock_async()
+    raise HTTPException(status_code=503, detail="Could not acquire submit lock")
 
-    ticket_payload = {
-        "category": category,
-        "urgency": urgency_label,
-        "subject": payload.subject,
-        "body": payload.body,
-        "description": payload.description,
-    }
-    ticket_id = add_ticket(payload.ticket_id, ticket_payload, urgency_score)
 
-    return TicketQueuedResponse(
-        ticket_id=ticket_id,
-        category=category,
-        urgency=urgency_label,
-        message="queued",
-    )
+@app.get("/tickets/{ticket_id}/status", response_model=TicketStatusResponse)
+async def get_ticket_status(ticket_id: str) -> TicketStatusResponse:
+    """Return current status: pending | processing | completed."""
+    data = await get_status_async(ticket_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return TicketStatusResponse(**data)
 
 
 @app.get("/queue", response_model=List[TicketItem])
-def list_queue() -> List[TicketItem]:
-    """Return current queue in priority order (no dequeue)."""
-    items = peek_queue()
-    return [TicketItem(**item) for item in items]
+async def list_queue() -> List[TicketItem]:
+    """Return all tickets from Redis, sorted by urgency (completed) then pending/processing."""
+    items = await list_queue_from_redis_async()
+    out = []
+    for d in items:
+        u = d.get("urgency_label") or ("high" if (d.get("urgency_score") or 0) >= 0.5 else "low")
+        out.append(
+            TicketItem(
+                ticket_id=d["ticket_id"],
+                category=d.get("category") or "Technical",
+                urgency=u,
+                urgency_score=d.get("urgency_score"),
+                subject=d.get("subject"),
+                body=d.get("body"),
+                description=d.get("description"),
+                created_at=d.get("created_at") or 0,
+            )
+        )
+    return out
 
 
 @app.get("/tickets/next", response_model=TicketItem)
-def get_next_ticket() -> TicketItem:
-    """Dequeue and return the highest-priority ticket. 404 if queue empty."""
-    ticket = get_next()
+async def get_next_ticket() -> TicketItem:
+    """Dequeue and return the highest-urgency completed ticket. 404 if none ready."""
+    ticket = await asyncio.to_thread(get_next_ready_ticket_sync)
     if ticket is None:
         raise HTTPException(status_code=404, detail="Queue is empty")
-    return TicketItem(**ticket)
+    u = ticket.get("urgency_label") or ("high" if (ticket.get("urgency_score") or 0) >= 0.5 else "low")
+    return TicketItem(
+        ticket_id=ticket["ticket_id"],
+        category=ticket.get("category") or "Technical",
+        urgency=u,
+        urgency_score=ticket.get("urgency_score"),
+        subject=ticket.get("subject"),
+        body=ticket.get("body"),
+        description=ticket.get("description"),
+        created_at=ticket.get("created_at") or 0,
+    )
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    """Simple health check."""
+def health() -> dict:
+    """Health check."""
     return {"status": "ok"}
