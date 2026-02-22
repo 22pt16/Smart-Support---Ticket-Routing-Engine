@@ -1,0 +1,11 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+redis>=4.5.0
+httpx>=0.24.0
+python-dotenv>=1.0.0
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+sentence-transformers
+scikit-learn
